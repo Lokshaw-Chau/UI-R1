@@ -12,9 +12,9 @@ import logging
 from multiprocessing import Pool
 import functools
 import torch.multiprocessing as mp
-logging.basicConfig()
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+# logging.basicConfig()
+# logger = logging.getLogger(__name__)
+# logger.setLevel(logging.INFO)
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 rank = 0
@@ -42,20 +42,20 @@ def extract_coord(content):
 logger = logging.getLogger(__name__)
 
 def run(rank, world_size, args):
-    if "Qwen2.5" in args.model_path:
-        model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-            args.model_path,
-            torch_dtype=torch.bfloat16,
-            attn_implementation="flash_attention_2",
-            device_map="cpu",
-        )
-    else:
-        model = Qwen2VLForConditionalGeneration.from_pretrained(
-            args.model_path,
-            torch_dtype=torch.bfloat16,
-            attn_implementation="flash_attention_2",
-            device_map="cpu",
-        )
+    # if "qwen2.5" in args.model_path:
+    model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+        args.model_path,
+        torch_dtype=torch.bfloat16,
+        attn_implementation="flash_attention_2",
+        device_map="cpu",
+    )
+    # else:
+    #     model = Qwen2VLForConditionalGeneration.from_pretrained(
+    #         args.model_path,
+    #         torch_dtype=torch.bfloat16,
+    #         attn_implementation="flash_attention_2",
+    #         device_map="cpu",
+    #     )
     if args.ori_processor_path is None:
         ori_processor_path = args.model_path
     infer_dir = os.path.join(args.model_path,'infer')
@@ -70,7 +70,10 @@ def run(rank, world_size, args):
     error_count = 0
     correct_count = 0
     pred_results = []
-    
+    text_correct_cnt = 0
+    text_error_cnt = 0
+    icon_correct_cnt = 0
+    icon_error_cnt = 0
 
     dataset = args.test_json
     data = json.load(open(dataset, "r"))
@@ -82,12 +85,21 @@ def run(rank, world_size, args):
         image_path = os.path.join(args.image_path, item["img_filename"])  # 通过 args 传递路径
         task_prompt = item["instruction"]
 
+        # question_template = (
+        #     f"In this UI screenshot, I want to perform the command '{task_prompt}'.\n"
+        #     "Please provide the action to perform (enumerate in ['click', 'scroll']) and the coordinate where the cursor is moved to(integer) if click is performed.\n"
+        #     "Output the thinking process in <think> </think> and final answer in <answer> </answer> tags."
+        #     "The output answer format should be as follows:\n"
+        #     "<think> ... </think> <answer>[{'action': enum['click', 'scroll'], 'coordinate': [x, y]}]</answer>\n"
+        #     "Please strictly follow the format."
+        # )
         question_template = (
             f"In this UI screenshot, I want to perform the command '{task_prompt}'.\n"
-            "Please provide the action to perform (enumerate in ['click', 'scroll']) and the coordinate where the cursor is moved to(integer) if click is performed.\n"
-            "Output the thinking process in <think> </think> and final answer in <answer> </answer> tags."
+            "Please provide the action to perform (enumerate in ['click', 'scroll'])"
+            "and the coordinate where the cursor is moved to(integer) if click is performed.\n"
+            "Output the final answer in <answer> </answer> tags."
             "The output answer format should be as follows:\n"
-            "<think> ... </think> <answer>[{'action': enum['click', 'scroll'], 'coordinate': [x, y]}]</answer>\n"
+            "<answer>[{'action': enum['click', 'scroll'], 'coordinate': [x, y]}]</answer>\n"
             "Please strictly follow the format."
         )
         query = '<image>\n' + question_template
@@ -133,14 +145,23 @@ def run(rank, world_size, args):
             pred_coord, _ = extract_coord(response)
             # pred_coord[0] = int(pred_coord[0] * scale_x)
             # pred_coord[1] = int(pred_coord[1] * scale_y)
-            success = gt_bbox[0] <= pred_coord[0] <= gt_bbox[2] and gt_bbox[1] <= pred_coord[1] <= gt_bbox[3]
+            success = gt_bbox[0] <= pred_coord[0] <= gt_bbox[2] + gt_bbox[0]and gt_bbox[1] <= pred_coord[1] <= gt_bbox[1] + gt_bbox[3]
             if success:
+                if item["data_type"] == 'text':
+                    text_correct_cnt += 1
+                else:
+                    icon_correct_cnt += 1
                 correct_count += 1
             else:
+                if item["data_type"] == 'text':
+                    text_error_cnt += 1
+                else:
+                    icon_error_cnt += 1
                 error_count += 1
             
             new_pred_dict = {
                 'image_id': item["img_filename"],
+                'data_type': item["data_type"],
                 'gt_bbox': gt_bbox,
                 'pred_coord': pred_coord,
                 'response': response,
@@ -152,10 +173,14 @@ def run(rank, world_size, args):
             pred_results.append(new_pred_dict)
 
         except Exception as e:
+            if item["data_type"] == 'text':
+                text_error_cnt += 1
+            else:
+                icon_error_cnt += 1
             print(f"Process {rank} error: {e}", flush=True)
             error_count += 1
 
-    return [error_count, correct_count, pred_results]
+    return [error_count, correct_count, pred_results, text_correct_cnt, icon_correct_cnt, text_error_cnt, icon_error_cnt]
 
 def main(args):
     multiprocess = torch.cuda.device_count() >= 2
@@ -172,15 +197,33 @@ def main(args):
 
         global_count_error = 0
         global_count_correct = 0
+        global_text_correct_cnt = 0
+        global_icon_correct_cnt = 0
+        global_text_error_cnt = 0
+        global_icon_error_cnt = 0
         global_results = []
 
         for i in range(world_size):
             global_count_error += int(result_lists[i][0])
             global_count_correct += int(result_lists[i][1])
+            global_text_correct_cnt += int(result_lists[i][3])
+            global_icon_correct_cnt += int(result_lists[i][4])
+            global_text_error_cnt += int(result_lists[i][5])
+            global_icon_error_cnt += int(result_lists[i][6])
             global_results.extend(result_lists[i][2])  # 修正拼接方式
 
-        logger.info(f'Error number: {global_count_error}')  
+        # logger.info(f'Correct number: {global_count_correct}')
+        # logger.info(f'Error number: {global_count_error}')  
+        # logger.info(f'Text correct number: {global_text_correct_cnt}')
+        # logger.info(f'Icon correct number: {global_icon_correct_cnt}')
+        # logger.info(f'Total number: {global_count_correct + global_count_error}')
+        logger.info(f'Avg Acc: {global_count_correct / (global_count_correct + global_count_error)}')
+        logger.info(f'Error number: {global_count_error}')
+        logger.info(f'Total number: {global_count_correct + global_count_error}')
+        logger.info(f'Text correct Acc: {global_text_correct_cnt / (global_text_correct_cnt + global_text_error_cnt) if global_text_correct_cnt + global_text_error_cnt > 0 else 0}')
+        logger.info(f'Icon correct Acc: {global_icon_correct_cnt / (global_icon_correct_cnt + global_icon_error_cnt) if global_icon_correct_cnt + global_icon_error_cnt > 0 else 0}')
 
+        
         logger.info('Finished running')
     
     else:
@@ -197,4 +240,6 @@ if __name__ == "__main__":
     parser.add_argument("--test_json", type=str, required=True)
     parser.add_argument("--test_name", type=str, required=True)
     args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO, filename='/mnt/data/home/zoulexiao/workspace/UI-R1/evaluation/logs/' + args.test_name + '.log', filemode='w')
+    
     main(args)

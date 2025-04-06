@@ -193,22 +193,33 @@ def format_reward(completions, **kwargs):
     matches = [re.fullmatch(pattern, content, re.DOTALL) for content in completion_contents]
     return [1.0 if match else 0.0 for match in matches]
 
+def action_only_format_reward(completions, **kwargs):
+    """Reward function that checks if the completion has a specific format."""
+    # pattern = r"<think>.*?</think>\s*<answer>.*?</answer>"
+    # pattern = r"<answer>{{'action': '.*?'}}</answer>"
+    # "<answer>[{'action': enum['click', 'open_app', 'scroll', 'navigate_back', 'input_text], 'coordinate': [x, y]}]</answer>\n"
+    pattern = r"<answer>\[{'action': '.*?', 'coordinate': \[\d+, \d+\]}\]</answer>"
+    completion_contents = [completion[0]["content"] for completion in completions]
+    # matches = [re.match(pattern, content) for content in completion_contents]
+    matches = [re.fullmatch(pattern, content, re.DOTALL) for content in completion_contents]
+    return [1.0 if match else 0.0 for match in matches]
+
 ###  reward registry three parts
 reward_funcs_registry = {
     "accuracy_action": accuracy_reward_action,
     "accuracy_coord": accuracy_reward_coord,
-    "format": format_reward,
+    "format": action_only_format_reward,
 }
 
 @dataclass
 class GRPOModelConfig(ModelConfig):
     freeze_vision_modules: bool = False
-SYSTEM_PROMPT = (
-    "A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The assistant "
-    "first thinks about the reasoning process in the mind and then provides the user with the answer. The reasoning "
-    "process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., "
-    "<think> reasoning process here </think><answer> answer here </answer>"
-)
+# SYSTEM_PROMPT = (
+#     "A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The assistant "
+#     "first thinks about the reasoning process in the mind and then provides the user with the answer. The reasoning "
+#     "process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., "
+#     "<think> reasoning process here </think><answer> answer here </answer>"
+# )
 
 
 def main(script_args, training_args, model_args):
@@ -244,13 +255,22 @@ def main(script_args, training_args, model_args):
                     del item['img_filename'] # remove the image column so that it can be loaded later
                 # Remove immediate image loading
                 task_prompt = item['instruction']
+                # item['problem'] = (
+                #     f"In this UI screenshot, I want to perform the command '{task_prompt}'.\n"
+                #     "Please provide the action to perform (enumerate in ['click', 'open_app', 'scroll', 'navigate_back', 'input_text]')"
+                #     "and the coordinate where the cursor is moved to(integer) if click is performed.\n"
+                #     "Output the thinking process in <think> </think> and final answer in <answer> </answer> tags."
+                #     "The output answer format should be as follows:\n"
+                #     "<think> ... </think> <answer>[{'action': enum['click', 'open_app', 'scroll', 'navigate_back', 'input_text], 'coordinate': [x, y]}]</answer>\n"
+                #     "Please strictly follow the format."
+                # )
                 item['problem'] = (
                     f"In this UI screenshot, I want to perform the command '{task_prompt}'.\n"
-                    "Please provide the action to perform (enumerate in ['click', 'open_app', 'scroll', 'navigate_back', 'input_text]')"
+                    "Please provide the action to perform (enumerate in ['click', 'open_app', 'scroll', 'navigate_back', 'input_text])"
                     "and the coordinate where the cursor is moved to(integer) if click is performed.\n"
-                    "Output the thinking process in <think> </think> and final answer in <answer> </answer> tags."
+                    "Output the final answer in <answer> </answer> tags."
                     "The output answer format should be as follows:\n"
-                    "<think> ... </think> <answer>[{'action': enum['click', 'open_app', 'scroll', 'navigate_back', 'input_text], 'coordinate': [x, y]}]</answer>\n"
+                    "<answer>[{'action': enum['click', 'open_app', 'scroll', 'navigate_back', 'input_text], 'coordinate': [x, y]}]</answer>\n"
                     "Please strictly follow the format."
                 )
                 if 'bbox' in item:
