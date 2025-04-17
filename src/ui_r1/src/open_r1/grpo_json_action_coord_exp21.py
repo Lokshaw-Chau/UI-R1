@@ -1,4 +1,3 @@
-
 # Copyright 2025 The HuggingFace Team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -72,12 +71,23 @@ def accuracy_reward_action(completions, solution, **kwargs):
     contents = [completion[0]["content"] for completion in completions]
 
 def extract_action(response):
-    answer_tag_pattern = r'<answer>(.*?)</answer>'
+    answer_tag_pattern = r'\{(.*?)\}'
     action_pattern = r"'action':\s*'(\w+)'"
     action_pattern_1 = r"'action':\s*(\w+)"
-    content_answer_match = re.search(answer_tag_pattern, response, re.DOTALL)
-    if content_answer_match:
-        content_answer = content_answer_match.group(1).strip()
+    # content_answer_match = re.search(answer_tag_pattern, response, re.DOTALL)
+    # if content_answer_match:
+    #     content_answer = content_answer_match.group(1).strip()
+    #     action_match = re.search(action_pattern, content_answer)
+    #     if action_match:
+    #         return action_match.group(1)
+    #     action_match = re.search(action_pattern_1, content_answer)
+    #     if action_match:
+    #         return action_match.group(1)
+    # return None
+    # extract the last answer tag
+    content_answer_match = re.findall(answer_tag_pattern, response, re.DOTALL)
+    if len(content_answer_match) > 0:
+        content_answer = content_answer_match[-1].strip()
         action_match = re.search(action_pattern, content_answer)
         if action_match:
             return action_match.group(1)
@@ -87,11 +97,20 @@ def extract_action(response):
     return None
 
 def extract_coord(response):
-    answer_tag_pattern = r'<answer>(.*?)</answer>'
+    answer_tag_pattern = r'\{(.*?)\}'
     bbox_pattern = r'\[(\d+),\s*(\d+)]'
-    content_answer_match = re.search(answer_tag_pattern, response, re.DOTALL)
-    if content_answer_match:
-        content_answer = content_answer_match.group(1).strip()
+    # content_answer_match = re.search(answer_tag_pattern, response, re.DOTALL)
+    # if content_answer_match:
+    #     content_answer = content_answer_match.group(1).strip()
+    #     coord_match = re.search(bbox_pattern, content_answer)
+    #     if coord_match:
+    #         coord = [int(coord_match.group(1)), int(coord_match.group(2))]
+    #         return coord , True
+    # return [0, 0], False
+    # extract the last answer tag
+    content_answer_match = re.findall(answer_tag_pattern, response, re.DOTALL)
+    if len(content_answer_match) > 0:
+        content_answer = content_answer_match[-1].strip()
         coord_match = re.search(bbox_pattern, content_answer)
         if coord_match:
             coord = [int(coord_match.group(1)), int(coord_match.group(2))]
@@ -183,6 +202,58 @@ def accuracy_reward_coord(completions, solution,scales, **kwargs):
                     f.write(f"ground_truth_bbox: {ground_truth_bbox}\n")
     return rewards
 
+def accuracy_reward_verify(completions, solution,scales, **kwargs):
+    """Reward function that checks if the completion is correct using either symbolic verification or exact string matching."""
+    contents = [completion[0]["content"] for completion in completions]
+    rewards = []
+    current_time = datetime.now().strftime("%d-%H-%M-%S-%f")
+
+    show_flage = False
+    for content, sol in zip(contents, solution):
+        reward = 0.0
+        try:
+            verification_list = re.findall(r"'verification':\s*'(.*?)'", content, re.DOTALL)
+            answer_tag_pattern = r'\{.*?\}'
+            all_answers = re.findall(answer_tag_pattern, content, re.DOTALL)
+            correct_cnt = 0
+            answer_flags = []
+            for answer in all_answers:
+                student_answer_action = extract_action(answer)
+                ground_truth_action = extract_action(sol)
+                answer_flag = False
+                if student_answer_action and ground_truth_action and student_answer_action == ground_truth_action:
+                    if student_answer_action == "click":
+                        student_answer_coord, flag1 = extract_coord(answer)
+                        student_answer_coord = [int(student_answer_coord[0] * scales[0]), int(student_answer_coord[1] * scales[1])]
+                        ground_truth_bbox, flag2 = extract_bbox(sol)
+                        show_flage = flag1 and flag2
+                        if ground_truth_bbox[0] <= student_answer_coord[0] <= ground_truth_bbox[2] and ground_truth_bbox[1] <= student_answer_coord[1] <= ground_truth_bbox[3]:
+                            answer_flag = True
+                    else:
+                        answer_flag = True
+                answer_flags.append(answer_flag)
+            
+            for i in range(len(verification_list)):
+                if (verification_list[i] == "True" and answer_flags[i]) or (verification_list[i] == "False" and answer_flags[i] == False):
+                    correct_cnt += 1
+            reward = correct_cnt / len(verification_list)
+        except Exception:
+            pass
+                
+        rewards.append(reward)
+        # import pdb; pdb.set_trace()
+        if os.getenv("DEBUG_MODE") == "true":
+            log_path = os.getenv("LOG_PATH")
+            # local_rank = int(os.getenv("LOCAL_RANK", 0))
+            with open(log_path, "a") as f:
+                f.write(f"------------- {current_time} Accuracy reward of Verification: {reward} -------------\n")
+                f.write(f"content: {content}\n")
+                f.write(f"sol: {sol}\n")
+                if show_flage:
+                    f.write(f"student_answer: {content}\n")
+                    f.write(f"ground_truth: {sol}\n")
+    return rewards
+
 
 
 def format_reward(completions, **kwargs):
@@ -194,27 +265,60 @@ def format_reward(completions, **kwargs):
     matches = [re.fullmatch(pattern, content, re.DOTALL) for content in completion_contents]
     return [1.0 if match else 0.0 for match in matches]
 
+def action_only_format_reward(completions, **kwargs):
+    """Reward function that checks if the completion has a specific format."""
+    # pattern = r"<think>.*?</think>\s*<answer>.*?</answer>"
+    # pattern = r"<answer>{{'action': '.*?'}}</answer>"
+    # "<answer>[{'action': enum['click', 'open_app', 'scroll', 'navigate_back', 'input_text], 'coordinate': [x, y]}]</answer>\n"
+    pattern = r"<answer>\[{'action': '.*?', 'coordinate': \[\d+, \d+\]}\]</answer>"
+    completion_contents = [completion[0]["content"] for completion in completions]
+    # matches = [re.match(pattern, content) for content in completion_contents]
+    matches = [re.fullmatch(pattern, content, re.DOTALL) for content in completion_contents]
+    return [1.0 if match else 0.0 for match in matches]
+
+def action_verify_format_reward(completions, **kwargs):
+    """Reward function that checks if the completion has a specific format."""
+    
+    pattern = r"\{'action': '.*?', 'coordinate': \[\d+, \d+\], 'verification': 'True'\}"
+    completion_contents = [completion[0]["content"] for completion in completions]
+    # allows duplicate pattern in completion
+    matches = [re.findall(pattern, content, re.DOTALL) for content in completion_contents]
+    verify_pattern = r"'verification':\s*'(.*?)'"
+    verify_pass = [False] * len(completion_contents)
+    for i in range(len(completion_contents)):
+        content = completion_contents[i]
+        verify_resultes = re.findall(verify_pattern, content, re.DOTALL)
+        if len(verify_resultes) > 0:
+            # all results should be True or False
+            for result in verify_resultes:
+                if result not in ['True', 'False']:
+                    continue
+            if verify_resultes[-1] == 'True' and verify_resultes.count('True') == 1:
+                verify_pass[i] = True
+    return [1.0 if len(matches[i])>0 and verify_pass[i] else 0.0 for i in range(len(matches))]
+
 ###  reward registry three parts
 reward_funcs_registry = {
     "accuracy_action": accuracy_reward_action,
     "accuracy_coord": accuracy_reward_coord,
-    "format": format_reward,
+    "format": action_verify_format_reward,
+    "action_verify": accuracy_reward_verify,
 }
 
 @dataclass
 class GRPOModelConfig(ModelConfig):
-    freeze_vision_modules: bool = True
-SYSTEM_PROMPT = (
-    "A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The assistant "
-    "first thinks about the reasoning process in the mind and then provides the user with the answer. The reasoning "
-    "process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., "
-    "<think> reasoning process here </think><answer> answer here </answer>"
-)
+    freeze_vision_modules: bool = False
+# SYSTEM_PROMPT = (
+#     "A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The assistant "
+#     "first thinks about the reasoning process in the mind and then provides the user with the answer. The reasoning "
+#     "process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., "
+#     "<think> reasoning process here </think><answer> answer here </answer>"
+# )
 
 
 def main(script_args, training_args, model_args):
     # Get reward functions
-    script_args.reward_funcs = ['accuracy_action','accuracy_coord','format']
+    script_args.reward_funcs = ['accuracy_action','accuracy_coord','format', 'action_verify']
     reward_funcs = [reward_funcs_registry[func] for func in script_args.reward_funcs]
 
     # Load the dataset from huggingface
@@ -245,13 +349,25 @@ def main(script_args, training_args, model_args):
                     del item['img_filename'] # remove the image column so that it can be loaded later
                 # Remove immediate image loading
                 task_prompt = item['instruction']
+                # item['problem'] = (
+                #     f"In this UI screenshot, I want to perform the command '{task_prompt}'.\n"
+                #     "Please provide the action to perform (enumerate in ['click', 'open_app', 'scroll', 'navigate_back', 'input_text]')"
+                #     "and the coordinate where the cursor is moved to(integer) if click is performed.\n"
+                #     "Output the thinking process in <think> </think> and final answer in <answer> </answer> tags."
+                #     "The output answer format should be as follows:\n"
+                #     "<think> ... </think> <answer>[{'action': enum['click', 'open_app', 'scroll', 'navigate_back', 'input_text], 'coordinate': [x, y]}]</answer>\n"
+                #     "Please strictly follow the format."
+                # )
                 item['problem'] = (
                     f"In this UI screenshot, I want to perform the command '{task_prompt}'.\n"
-                    "Please provide the action to perform (enumerate in ['click', 'open_app', 'scroll', 'navigate_back', 'input_text]')"
-                    "and the coordinate where the cursor is moved to(integer) if click is performed.\n"
-                    "Output the thinking process in <think> </think> (optional;) and final answer in <answer> </answer> tags."
+                    "Please provide the action to perform (enumerate in ['click', 'open_app', 'scroll', 'navigate_back', 'input_text])"
+                    ", the coordinate where the cursor is moved to(integer) if click is performed and then verify if the action and coordinate can achieve user intent.\n"
+                    "Output the answer in <answer> </answer> tags and the verification result after 'verification': ."
+                    "If the verfication is False, please provide the reflection of the action and coordinate, and then generate another answer until verification passes.\n"
+                    "If the verfication is True, please do not provide the reflection and stop trying.\n"
+                    # "You must iteratively generate actions until verification passes.\n"
                     "The output answer format should be as follows:\n"
-                    "<think> ... </think> <answer>[{'action': enum['click', 'open_app', 'scroll', 'navigate_back', 'input_text], 'coordinate': [x, y]}]</answer>\n"
+                    "<answer>[{'action': enum['click', 'open_app', 'scroll', 'navigate_back', 'input_text], 'coordinate': [x, y], 'verification': enum['True', 'False'], 'reflection': ...}, ...]</answer>"
                     "Please strictly follow the format."
                 )
                 if 'bbox' in item:
@@ -312,7 +428,6 @@ def main(script_args, training_args, model_args):
         attn_implementation=model_args.attn_implementation,
         max_pixels=script_args.max_pixels,
         min_pixels=script_args.min_pixels,
-        freeze_vision_modules=True,
     )
 
     # Train and push the model to the Hub

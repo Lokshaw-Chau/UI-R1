@@ -3,14 +3,14 @@ export DEBUG_MODE="true"
 export NCCL_P2P_LEVEL=NVL
 export DATA_PATH=/mnt/data/share/data1/ui-r1/train.json
 export CKPT_PATH=/mnt/data/share/Qwen2.5-VL-3B-Instruct
-export SAVE_PATH=/mnt/data/home/zoulexiao/workspace/UI-R1/ckpt/ablate-think
+export SAVE_PATH=/mnt/data/home/zoulexiao/workspace/UI-R1/ckpt/freeze_vision
 export LOG_PATH=${SAVE_PATH}"/debug_log.txt"
 export WANDB_BASE_URL=https://api.wandb.ai
 export WANDB_PROJECT=ui-r1
 # export WANDB_API_KEY="caa31fb6fb3373a34ec0ef957ee31c7dfebf8e10"
 # wandb login $WANDB_API_KEY
 
-CUDA_VISIBLE_DEVICES=0,1,4,5 torchrun --nproc_per_node=4 \
+CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 \
     --nnodes="1" \
     --node_rank="0" \
     --master_addr="127.0.0.1" \
@@ -32,7 +32,7 @@ CUDA_VISIBLE_DEVICES=0,1,4,5 torchrun --nproc_per_node=4 \
     --attn_implementation flash_attention_2 \
     --max_pixels 12845056 \
     --num_train_epochs 8 \
-    --run_name ablatethink \
+    --run_name freeze_vision \
     --save_strategy epoch \
     --save_only_model true \
     --num_generations 8

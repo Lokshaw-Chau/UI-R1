@@ -188,11 +188,11 @@ def accuracy_reward_coord(completions, solution,scales, **kwargs):
 def format_reward(completions, **kwargs):
     """Reward function that checks if the completion has a specific format."""
     pattern = r"<think>.*?</think>\s*<answer>.*?</answer>"
-    # pattern = r"<answer>.*?</answer>"
+    pattern_1 = r"<answer>.*?</answer>"
     completion_contents = [completion[0]["content"] for completion in completions]
-    # matches = [re.match(pattern, content) for content in completion_contents]
-    matches = [re.fullmatch(pattern, content, re.DOTALL) for content in completion_contents]
-    return [1.0 if match else 0.0 for match in matches]
+    matches = [re.fullmatch(pattern_1, content) for content in completion_contents]
+    matches_2 = [re.fullmatch(pattern, content, re.DOTALL) for content in completion_contents]
+    return [1.0 if matches[i] or matches_2[i] else 0.0 for i in range(len(completion_contents))]
 
 ###  reward registry three parts
 reward_funcs_registry = {
@@ -203,13 +203,13 @@ reward_funcs_registry = {
 
 @dataclass
 class GRPOModelConfig(ModelConfig):
-    freeze_vision_modules: bool = True
-SYSTEM_PROMPT = (
-    "A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The assistant "
-    "first thinks about the reasoning process in the mind and then provides the user with the answer. The reasoning "
-    "process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., "
-    "<think> reasoning process here </think><answer> answer here </answer>"
-)
+    freeze_vision_modules: bool = False
+# SYSTEM_PROMPT = (
+#     "A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The assistant "
+#     "first thinks about the reasoning process in the mind and then provides the user with the answer. The reasoning "
+#     "process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., "
+#     "<think> reasoning process here </think><answer> answer here </answer>"
+# )
 
 
 def main(script_args, training_args, model_args):
@@ -249,9 +249,11 @@ def main(script_args, training_args, model_args):
                     f"In this UI screenshot, I want to perform the command '{task_prompt}'.\n"
                     "Please provide the action to perform (enumerate in ['click', 'open_app', 'scroll', 'navigate_back', 'input_text]')"
                     "and the coordinate where the cursor is moved to(integer) if click is performed.\n"
-                    "Output the thinking process in <think> </think> (optional;) and final answer in <answer> </answer> tags."
+                    "Directly output final answer in <answer> </answer> tags. Only output the thinking process when the action is hard to decide"
                     "The output answer format should be as follows:\n"
                     "<think> ... </think> <answer>[{'action': enum['click', 'open_app', 'scroll', 'navigate_back', 'input_text], 'coordinate': [x, y]}]</answer>\n"
+                    "or\n"
+                    "<answer>[{'action': enum['click', 'open_app', 'scroll', 'navigate_back', 'input_text], 'coordinate': [x, y]}]</answer>\n"
                     "Please strictly follow the format."
                 )
                 if 'bbox' in item:
@@ -312,7 +314,6 @@ def main(script_args, training_args, model_args):
         attn_implementation=model_args.attn_implementation,
         max_pixels=script_args.max_pixels,
         min_pixels=script_args.min_pixels,
-        freeze_vision_modules=True,
     )
 
     # Train and push the model to the Hub

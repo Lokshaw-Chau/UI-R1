@@ -95,10 +95,11 @@ def run(rank, world_size, args):
         # )
         question_template = (
             f"In this UI screenshot, I want to perform the command '{task_prompt}'.\n"
-            "Please provide the action to perform (enumerate in ['click', 'scroll']) and the coordinate where the cursor is moved to(integer) if click is performed.\n"
-            "Output the thinking process in <think> </think> and final answer in <answer> </answer> tags."
+            "Please provide the action to perform (enumerate in ['click', 'scroll'])"
+            "and the coordinate where the cursor is moved to(integer) if click is performed.\n"
+            "Output the final answer in <answer> </answer> tags."
             "The output answer format should be as follows:\n"
-            "<think> ... </think> <answer>[{'action': enum['click', 'scroll'], 'coordinate': [x, y]}]</answer>\n"
+            "<answer>[{'action': enum['click', 'scroll'], 'coordinate': [x, y]}]</answer>\n"
             "Please strictly follow the format."
         )
         query = '<image>\n' + question_template
@@ -184,12 +185,7 @@ def run(rank, world_size, args):
 def main(args):
     multiprocess = torch.cuda.device_count() >= 2
     mp.set_start_method('spawn')
-    # create a new file
-    infer_dir = os.path.join(args.model_path,'infer')
-    output_file = os.path.join(infer_dir, f'prediction_results_{args.test_name}.jsonl')
-    if os.path.exists(output_file):
-        os.remove(output_file)
-
+    
     if multiprocess:
         logger.info('Started generation')
         n_gpus = torch.cuda.device_count()

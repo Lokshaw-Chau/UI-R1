@@ -25,15 +25,20 @@ def extract_coord(content):
     content_answer_match = re.search(answer_tag_pattern, content, re.DOTALL)
     if content_answer_match:
         content_answer = content_answer_match.group(1).strip()
-        coord_match = re.search(bbox_pattern, content_answer)
-        if coord_match:
-            coord = [int(coord_match.group(1)), int(coord_match.group(2))]
+        # coord_match = re.search(bbox_pattern, content_answer)
+        coord_matches = re.findall(bbox_pattern, content_answer)
+
+        if coord_matches:
+            coord_match = coord_matches[-1]
+            coord = [int(coord_match[0]), int(coord_match[1])]
             return coord, True
     else:
         coord_pattern = r'\{.*\((\d+),\s*(\d+))\s*.*\}'
-        coord_match = re.search(coord_pattern, content)
+        # coord_match = re.search(coord_pattern, content)
+        coord_matches = re.findall(coord_pattern, content)
         if coord_match:
-            coord = [int(coord_match.group(1)), int(coord_match.group(2))]
+            coord_match = coord_matches[-1]
+            coord = [int(coord_match[0]), int(coord_match[1])]
             return coord, True
     return [0, 0, 0, 0], False
 
@@ -94,13 +99,16 @@ def run(rank, world_size, args):
         #     "Please strictly follow the format."
         # )
         question_template = (
-            f"In this UI screenshot, I want to perform the command '{task_prompt}'.\n"
-            "Please provide the action to perform (enumerate in ['click', 'scroll']) and the coordinate where the cursor is moved to(integer) if click is performed.\n"
-            "Output the thinking process in <think> </think> and final answer in <answer> </answer> tags."
-            "The output answer format should be as follows:\n"
-            "<think> ... </think> <answer>[{'action': enum['click', 'scroll'], 'coordinate': [x, y]}]</answer>\n"
-            "Please strictly follow the format."
-        )
+                    f"In this UI screenshot, I want to perform the command '{task_prompt}'.\n"
+                    "Please provide the action to perform (enumerate in ['click', 'scroll'])"
+                    "and the coordinate where the cursor is moved to(integer) if click is performed.\n"
+                    "Output the answer in <answer> </answer> tags and the verification result after 'verification': "
+                    # "You must iteratively generate actions until verification passes.\n"
+                    "The output answer format should be as follows:\n"
+                    "<answer>[{'action': enum['click', 'scroll'], 'coordinate': [x, y], 'verification': enum['True', 'False']}]</answer>"
+                    "You must iteratively generate answers until verification passes.\n"
+                    "Please strictly follow the format."
+                )
         query = '<image>\n' + question_template
         messages = [
             {
